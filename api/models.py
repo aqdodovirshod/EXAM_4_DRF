@@ -1,0 +1,193 @@
+from django.db import models
+from accounts.models import CustomUser
+
+
+class Company(models.Model):
+    name = models.CharField("Company name", max_length=200, unique=True)
+    logo = models.ImageField("Logo", upload_to="company_logos/", blank=True, null=True)
+    description = models.TextField("Description", blank=True)
+    website = models.URLField("Website", blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Company"
+        verbose_name_plural = "Companies"
+
+    def __str__(self):
+        return self.name
+
+class Vacancy(models.Model):
+    EMPLOYMENT_TYPE_CHOICES = [
+        ("full_time", "Full-time"),
+        ("part_time", "Part-time"),
+        ("contract", "Contract"),
+        ("internship", "Internship"),
+        ("fifo", "FIFO / Вахта"),
+        ("volunteer", "Volunteering"),
+    ]
+
+    WORK_FORMAT_CHOICES = [
+        ("on_site", "On-site"),
+        ("remote", "Remote"),
+        ("hybrid", "Hybrid"),
+        ("shift", "Shift work"),
+    ]
+
+    EXPERIENCE_CHOICES = [
+        ("no_exp", "No experience"),
+        ("1_3", "1–3 years"),
+        ("3_6", "3–6 years"),
+        ("6_plus", "6+ years"),
+    ]
+
+    title = models.CharField("Job title", max_length=200, db_index=True)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="vacancies")
+    location = models.CharField("Location", max_length=150, db_index=True)
+    description = models.TextField("Description")
+    responsibilities = models.TextField("Responsibilities", blank=True)
+    requirements = models.TextField("Requirements", blank=True)
+
+    salary_from = models.DecimalField("Salary from", max_digits=12, decimal_places=2, null=True, blank=True)
+    salary_to = models.DecimalField("Salary to", max_digits=12, decimal_places=2, null=True, blank=True)
+    currency = models.CharField("Currency", max_length=10, default="TJS")
+    show_salary = models.BooleanField("Show salary", default=True)
+
+    employment_type = models.CharField("Employment type", max_length=20, choices=EMPLOYMENT_TYPE_CHOICES, db_index=True)
+    work_format = models.CharField("Work format", max_length=10, choices=WORK_FORMAT_CHOICES, db_index=True)
+    experience_required = models.CharField("Experience", max_length=10, choices=EXPERIENCE_CHOICES, default="no_exp")
+
+    is_active = models.BooleanField("Active", default=True)
+    views = models.PositiveIntegerField("Views", default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    author = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="vacancies")
+
+    class Meta:
+        verbose_name = "Vacancy"
+        verbose_name_plural = "Vacancies"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["location", "employment_type", "work_format"]),
+        ]
+
+    def __str__(self):
+        return f"{self.title} в {self.company.name}"
+
+    def increment_views(self):
+        Vacancy.objects.filter(pk=self.pk).update(views=models.F("views") + 1)
+        self.refresh_from_db()
+
+    def salary_display(self):
+        if not self.show_salary:
+            return "По договорённости"
+        if self.salary_from and self.salary_to:
+            return f"{self.salary_from} – {self.salary_to} {self.currency}"
+        if self.salary_from:
+            return f"от {self.salary_from} {self.currency}"
+        if self.salary_to:
+            return f"до {self.salary_to} {self.currency}"
+        return "Не указана"
+
+
+class Skill(models.Model):
+    name = models.CharField("Skill", max_length=100, unique=True)
+
+    class Meta:
+        verbose_name = "Skill"
+        verbose_name_plural = "Skills"
+
+    def __str__(self):
+        return self.name
+
+
+class Resume(models.Model):
+    user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name="resume")
+
+    full_name = models.CharField("Full name", max_length=200)
+    desired_position = models.CharField("Desired position", max_length=200, db_index=True)
+    location = models.CharField("Location", max_length=150, blank=True, db_index=True)
+    phone = models.CharField("Phone", max_length=20, blank=True)
+    email = models.EmailField("Email", blank=True)
+
+    salary_expectation = models.DecimalField("Expected salary", max_digits=12, decimal_places=2, null=True, blank=True)
+    experience_years = models.PositiveSmallIntegerField("Years of experience", default=0)
+    about = models.TextField("About me", blank=True)
+    skills = models.ManyToManyField(Skill, related_name="resumes", blank=True)
+
+    is_active = models.BooleanField("Looking for job", default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Resume"
+        verbose_name_plural = "Resumes"
+
+    def __str__(self):
+        return f"{self.full_name} – {self.desired_position}"
+
+    def has_skill(self, skill_name: str) -> bool:
+        return self.skills.filter(name__iexact=skill_name).exists()
+
+
+class Application(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("reviewed", "Reviewed"),
+        ("accepted", "Accepted"),
+        ("rejected", "Rejected"),
+    ]
+
+    applicant = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="applications_sent")
+    vacancy = models.ForeignKey(Vacancy, on_delete=models.CASCADE, related_name="applications_received")
+    resume = models.ForeignKey(Resume, on_delete=models.SET_NULL, null=True, blank=True, related_name="applications")
+
+    cover_letter = models.TextField("Cover letter", blank=True)
+    status = models.CharField("Status", max_length=10, choices=STATUS_CHOICES, default="pending")
+
+    applied_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("applicant", "vacancy")
+        verbose_name = "Response"
+        verbose_name_plural = "Responses"
+        indexes = [
+            models.Index(fields=["vacancy", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.applicant} → {self.vacancy.title}"
+
+    def mark_reviewed(self):
+        self.status = "reviewed"
+        self.save(update_fields=["status", "updated_at"])
+
+    def mark_accepted(self):
+        self.status = "accepted"
+        self.save(update_fields=["status", "updated_at"])
+
+    def mark_rejected(self):
+        self.status = "rejected"
+        self.save(update_fields=["status", "updated_at"])
+
+
+class FavoriteVacancy(models.Model):
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="favorites")
+    vacancy = models.ForeignKey(Vacancy, on_delete=models.CASCADE, related_name="favorited_by")
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "vacancy")
+        verbose_name = "Featured vacancy"
+        verbose_name_plural = "Featured vacancies"
+        ordering = ["-added_at"]
+
+    def __str__(self):
+        return f"{self.user} Favorites {self.vacancy.title}"
+
+    @staticmethod
+    def is_favorited(user, vacancy):
+        return FavoriteVacancy.objects.filter(user=user, vacancy=vacancy).exists()
